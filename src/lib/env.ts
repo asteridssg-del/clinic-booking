@@ -16,5 +16,6 @@ export const env = {
     .map((v) => v.trim().toLowerCase())
     .filter(Boolean),
   resendApiKey: process.env.RESEND_API_KEY,
+  resendFromEmail: process.env.RESEND_FROM_EMAIL,
   cronSecret: process.env.CRON_SECRET
 };

@@ -66,7 +66,7 @@ export class EmailProvider implements NotificationProvider {
     try {
       const resend = new Resend(process.env.RESEND_API_KEY);
       const { data, error } = await resend.emails.send({
-        from:    "Clinic Booking <notifications@clinicbooking.app>",
+        from:    process.env.RESEND_FROM_EMAIL ?? "Clinic Booking <onboarding@resend.dev>",
         to:      [payload.recipient],
         subject: "Clinic Booking — Appointment Update",
         text:    payload.message
