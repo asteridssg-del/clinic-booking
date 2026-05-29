@@ -3,6 +3,7 @@ import { Role } from "@prisma/client";
 import { z } from "zod";
 import { createAppointment } from "@/modules/appointments/service";
 import { requireCurrentUser } from "@/modules/auth/current-user";
+import { sendBookingConfirmation } from "@/modules/notifications/service";
 
 const createSchema = z.object({
   clinicId: z.string().min(1),
@@ -48,6 +49,10 @@ export async function POST(req: NextRequest) {
       endAt: parsed.data.endAt,
       notes: parsed.data.notes
     });
+
+    sendBookingConfirmation(appointment.id).catch((err) =>
+      console.error("[Confirmation] Failed:", err)
+    );
 
     return NextResponse.json(appointment, { status: 201 });
   } catch (error) {

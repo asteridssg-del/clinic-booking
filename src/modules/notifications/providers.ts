@@ -1,3 +1,4 @@
+import { Resend } from "resend";
 import { ReminderChannel } from "@prisma/client";
 import { NotificationProvider, NotificationPayload, NotificationResponse } from "./types";
 
@@ -55,11 +56,26 @@ export class EmailProvider implements NotificationProvider {
   async send(payload: NotificationPayload): Promise<NotificationResponse> {
     console.log(`[EmailProvider] Sending email to ${payload.recipient}: "${payload.message}"`);
 
-    // Simulate sending email success
-    return {
-      success: true,
-      messageId: `sim-email-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
-    };
+    if (!process.env.RESEND_API_KEY) {
+      return {
+        success: true,
+        messageId: `sim-email-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+      };
+    }
+
+    try {
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      const { data, error } = await resend.emails.send({
+        from:    "Clinic Booking <notifications@clinicbooking.app>",
+        to:      [payload.recipient],
+        subject: "Clinic Booking — Appointment Update",
+        text:    payload.message
+      });
+      if (error) return { success: false, error: error.message };
+      return { success: true, messageId: data?.id };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
   }
 }
 

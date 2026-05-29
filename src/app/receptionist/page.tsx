@@ -37,8 +37,8 @@ export default async function ReceptionistPage() {
     where: { id: session.user.tenantId }
   });
 
-  // 4. Fetch all Providers (Doctors) under this tenant
-  const providers = await db.provider.findMany({
+  // 4. Fetch all Providers (Doctors) under this tenant, with schedules and upcoming time-off
+  const providersRaw = await db.provider.findMany({
     where: {
       clinic: { tenantId: session.user.tenantId, active: true },
       active: true
@@ -46,9 +46,23 @@ export default async function ReceptionistPage() {
     select: {
       id: true,
       name: true,
-      specialty: true
+      specialty: true,
+      schedules: { orderBy: { weekday: "asc" } },
+      timeOff: {
+        where: { endAt: { gte: new Date() } },
+        orderBy: { startAt: "asc" }
+      }
     }
   });
+
+  const providers = providersRaw.map((p) => ({
+    ...p,
+    timeOff: p.timeOff.map((t) => ({
+      ...t,
+      startAt: t.startAt.toISOString(),
+      endAt:   t.endAt.toISOString()
+    }))
+  }));
 
   // 5. Fetch all appointments under this tenant
   const appointmentsRaw = await db.appointment.findMany({

@@ -38,6 +38,16 @@ interface Appointment {
   };
 }
 
+interface PastAppointment {
+  id: string;
+  startAt: string;
+  endAt: string;
+  status: AppointmentStatus;
+  notes: string | null;
+  provider: { name: string; specialty: string };
+  clinic: { name: string; timezone: string };
+}
+
 interface PatientDashboardProps {
   user: User;
   tenantName: string;
@@ -45,6 +55,7 @@ interface PatientDashboardProps {
   clinics: Clinic[];
   activeAppointment: Appointment | null;
   patientPhone: string | null;
+  pastAppointments: PastAppointment[];
 }
 
 export default function PatientDashboard({
@@ -54,6 +65,7 @@ export default function PatientDashboard({
   clinics,
   activeAppointment: initialActiveAppointment,
   patientPhone,
+  pastAppointments,
 }: PatientDashboardProps) {
   // Booking & Rescheduling States
   const [activeAppointment, setActiveAppointment] = useState<Appointment | null>(initialActiveAppointment);
@@ -66,6 +78,9 @@ export default function PatientDashboard({
   const [phoneSubmitting, setPhoneSubmitting] = useState(false);
   const [phoneError, setPhoneError] = useState("");
   const [phoneSuccess, setPhoneSuccess] = useState(false);
+
+  // History toggle
+  const [showHistory, setShowHistory] = useState(false);
   
   // Wizard States
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -352,7 +367,7 @@ export default function PatientDashboard({
         </div>
       )}
 
-      {/* Booking Flow Router */}
+      {/* Booking Flow Router — keep existing content below */}
       {activeAppointment && !isRescheduling ? (
         /* ================= Active Appointment Mode ================= */
         <section style={styles.glassCard}>
@@ -599,8 +614,51 @@ export default function PatientDashboard({
           )}
         </section>
       )}
+      {/* Appointment History */}
+      {pastAppointments.length > 0 && (
+        <section style={{ marginTop: "24px" }}>
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            style={styles.historyToggle}
+          >
+            {showHistory ? "Hide" : "Show"} Appointment History ({pastAppointments.length})
+          </button>
+
+          {showHistory && (
+            <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "12px" }}>
+              {pastAppointments.map((apt) => (
+                <div key={apt.id} style={styles.historyCard}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
+                      {new Date(apt.startAt).toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" })}
+                      {" · "}
+                      {new Date(apt.startAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: apt.clinic.timezone })}
+                    </span>
+                    <span style={getHistoryStatusStyle(apt.status)}>{apt.status.replace(/_/g, " ")}</span>
+                  </div>
+                  <div style={{ fontSize: "14px", fontWeight: 600, color: "#1e293b" }}>{apt.provider.name}</div>
+                  <div style={{ fontSize: "12px", color: "#64748b" }}>{apt.provider.specialty} · {apt.clinic.name}</div>
+                  {apt.notes && (
+                    <div style={{ marginTop: "8px", fontSize: "12px", color: "#64748b", fontStyle: "italic" }}>"{apt.notes}"</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
+}
+
+function getHistoryStatusStyle(status: AppointmentStatus): React.CSSProperties {
+  const base: React.CSSProperties = {
+    fontSize: "10px", fontWeight: 700, padding: "3px 7px", borderRadius: "5px",
+    textTransform: "uppercase", letterSpacing: "0.5px"
+  };
+  if (status === AppointmentStatus.COMPLETED) return { ...base, background: "#dcfce7", color: "#15803d" };
+  if (status === AppointmentStatus.NO_SHOW)   return { ...base, background: "#fef9c3", color: "#a16207" };
+  return { ...base, background: "#fee2e2", color: "#b91c1c" };
 }
 
 // Premium Sleek HSL Styles (Glassmorphism inspired)
@@ -1113,5 +1171,23 @@ const styles = {
     fontSize: "11px",
     color: "#92400e",
     opacity: 0.7,
+  },
+  historyToggle: {
+    background: "transparent",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    padding: "10px 16px",
+    fontSize: "13px",
+    fontWeight: "600" as const,
+    color: "#475569",
+    cursor: "pointer",
+    width: "100%",
+    textAlign: "left" as const,
+  },
+  historyCard: {
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "12px",
+    padding: "14px 16px",
   },
 };

@@ -32,6 +32,7 @@ enum ReminderChannel {
 enum ReminderType {
   T24
   T2
+  CONFIRMATION
 }
 
 enum ReminderStatus {

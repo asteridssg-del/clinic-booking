@@ -43,6 +43,18 @@ async function assertProviderAvailable(params: {
   if (overlapping) {
     throw new Error("Provider is not available for the selected time");
   }
+
+  const timeOffConflict = await db.providerTimeOff.findFirst({
+    where: {
+      providerId: params.providerId,
+      startAt: { lt: params.endAt },
+      endAt:   { gt: params.startAt }
+    },
+    select: { id: true }
+  });
+  if (timeOffConflict) {
+    throw new Error("Provider is not available for the selected time");
+  }
 }
 
 async function assertPatientRules(params: {
@@ -135,6 +147,12 @@ export async function createAppointment(input: {
 
   await assertProviderAvailable(input);
   await assertPatientRules(input);
+
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60_000);
+  const recentCount = await db.appointment.count({
+    where: { patientId: input.patientId, createdAt: { gte: tenMinutesAgo } }
+  });
+  if (recentCount >= 3) throw new Error("Too many booking attempts");
 
   const appointment = await db.appointment.create({
     data: {
@@ -307,6 +325,16 @@ export async function receptionistTransition(input: {
     select: { id: true, status: true }
   });
   if (!current) throw new Error("Appointment not found");
+
+  const VALID_TRANSITIONS: Record<string, AppointmentStatus[]> = {
+    CHECKED_IN: [AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED],
+    COMPLETED:  [AppointmentStatus.CHECKED_IN],
+    NO_SHOW:    [AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN]
+  };
+  const allowed = VALID_TRANSITIONS[input.nextStatus] ?? [];
+  if (!allowed.includes(current.status)) {
+    throw new Error(`Cannot transition from ${current.status} to ${input.nextStatus}`);
+  }
 
   const updated = await db.appointment.update({
     where: { id: current.id },

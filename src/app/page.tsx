@@ -134,6 +134,39 @@ export default async function HomePage() {
       })
     : null;
 
+  const pastAppointmentsRaw = userWithProfile.patientProfileId
+    ? await db.appointment.findMany({
+        where: {
+          tenantId: session.user.tenantId,
+          patientId: userWithProfile.patientProfileId,
+          status: {
+            in: [
+              AppointmentStatus.COMPLETED,
+              AppointmentStatus.CANCELLED_BY_PATIENT,
+              AppointmentStatus.CANCELLED_BY_RECEPTION,
+              AppointmentStatus.NO_SHOW
+            ]
+          }
+        },
+        include: {
+          provider: { select: { name: true, specialty: true } },
+          clinic:   { select: { name: true, timezone: true } }
+        },
+        orderBy: { startAt: "desc" },
+        take: 20
+      })
+    : [];
+
+  const pastAppointments = pastAppointmentsRaw.map((a) => ({
+    id: a.id,
+    startAt: a.startAt.toISOString(),
+    endAt: a.endAt.toISOString(),
+    status: a.status,
+    notes: a.notes,
+    provider: a.provider,
+    clinic: a.clinic
+  }));
+
   // Convert active appointment dates to string for client component serialization
   const activeAppointment = activeAppointmentRaw
     ? {
@@ -188,6 +221,7 @@ export default async function HomePage() {
       clinics={clinics}
       activeAppointment={activeAppointment}
       patientPhone={userWithProfile.patientProfile?.phoneE164 ?? null}
+      pastAppointments={pastAppointments}
     />
   );
 }

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { AppointmentStatus, ReminderChannel } from "@prisma/client";
+import WeekCalendar from "./WeekCalendar";
 
 interface Patient {
   id: string;
@@ -10,10 +11,27 @@ interface Patient {
   preferredChan: ReminderChannel;
 }
 
+interface ProviderSchedule {
+  id: string;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  breakJson: unknown;
+}
+
+interface ProviderTimeOff {
+  id: string;
+  startAt: string;
+  endAt: string;
+  reason: string | null;
+}
+
 interface Provider {
   id: string;
   name: string;
   specialty: string;
+  schedules?: ProviderSchedule[];
+  timeOff?: ProviderTimeOff[];
 }
 
 interface Appointment {
@@ -44,6 +62,22 @@ export default function ReceptionistDashboard({
   const [providerFilter, setProviderFilter] = useState<string>("ALL");
   const [loadingAptId, setLoadingAptId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+
+  // Tab navigation
+  const [activeTab, setActiveTab] = useState<"appointments" | "availability">("appointments");
+
+  // Calendar view
+  const [calendarView, setCalendarView] = useState<"list" | "calendar">("list");
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  // Availability management state
+  const [availProviders, setAvailProviders] = useState<Provider[]>(providers);
+  const [availMsg, setAvailMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null);
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+  const [scheduleEdits, setScheduleEdits] = useState<Record<string, { startTime: string; endTime: string }>>({});
+  const [timeOffForm, setTimeOffForm] = useState<Record<string, { startAt: string; endAt: string; reason: string }>>({});
+  const [savingSchedule, setSavingSchedule] = useState<string | null>(null);
+  const [savingTimeOff, setSavingTimeOff] = useState<string | null>(null);
 
   // Handler to transition statuses (checkin, complete, no-show, cancel)
   const handleTransition = async (appointmentId: string, action: "checkin" | "complete" | "no-show" | "cancel") => {
@@ -125,6 +159,72 @@ export default function ReceptionistDashboard({
     return `${dateLabel} @ ${timeLabel}`;
   };
 
+  const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  const handleSaveSchedule = async (providerId: string, weekday: number) => {
+    const key = `${providerId}-${weekday}`;
+    const edit = scheduleEdits[key];
+    if (!edit) return;
+    setSavingSchedule(key);
+    try {
+      const res = await fetch(`/api/v1/providers/${providerId}/schedule`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekday, startTime: edit.startTime, endTime: edit.endTime })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save");
+      setAvailProviders((prev) => prev.map((p) => {
+        if (p.id !== providerId) return p;
+        const existing = p.schedules?.filter((s) => s.weekday !== weekday) ?? [];
+        return { ...p, schedules: [...existing, data] };
+      }));
+      setAvailMsg({ id: key, text: "Saved!", ok: true });
+    } catch (err: any) {
+      setAvailMsg({ id: key, text: err.message, ok: false });
+    } finally {
+      setSavingSchedule(null);
+    }
+  };
+
+  const handleAddTimeOff = async (providerId: string) => {
+    const form = timeOffForm[providerId];
+    if (!form?.startAt || !form?.endAt) return;
+    setSavingTimeOff(providerId);
+    try {
+      const res = await fetch(`/api/v1/providers/${providerId}/time-off`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startAt: form.startAt, endAt: form.endAt, reason: form.reason || undefined })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to add");
+      setAvailProviders((prev) => prev.map((p) => {
+        if (p.id !== providerId) return p;
+        return { ...p, timeOff: [...(p.timeOff ?? []), { ...data, startAt: data.startAt, endAt: data.endAt }] };
+      }));
+      setTimeOffForm((prev) => ({ ...prev, [providerId]: { startAt: "", endAt: "", reason: "" } }));
+      setAvailMsg({ id: `to-${providerId}`, text: "Time-off added!", ok: true });
+    } catch (err: any) {
+      setAvailMsg({ id: `to-${providerId}`, text: err.message, ok: false });
+    } finally {
+      setSavingTimeOff(null);
+    }
+  };
+
+  const handleDeleteTimeOff = async (providerId: string, timeOffId: string) => {
+    try {
+      const res = await fetch(`/api/v1/providers/${providerId}/time-off/${timeOffId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete");
+      setAvailProviders((prev) => prev.map((p) => {
+        if (p.id !== providerId) return p;
+        return { ...p, timeOff: (p.timeOff ?? []).filter((t) => t.id !== timeOffId) };
+      }));
+    } catch (err: any) {
+      setAvailMsg({ id: `del-${timeOffId}`, text: err.message, ok: false });
+    }
+  };
+
   return (
     <div style={styles.container}>
       {/* Header bar */}
@@ -153,9 +253,52 @@ export default function ReceptionistDashboard({
         </div>
       </section>
 
+      {/* Tab bar */}
+      <div style={styles.tabBar}>
+        <button
+          onClick={() => setActiveTab("appointments")}
+          style={activeTab === "appointments" ? styles.tabBtnActive : styles.tabBtn}
+        >
+          Appointments
+        </button>
+        <button
+          onClick={() => setActiveTab("availability")}
+          style={activeTab === "availability" ? styles.tabBtnActive : styles.tabBtn}
+        >
+          Availability Management
+        </button>
+      </div>
+
+      {activeTab === "appointments" && (
+        <>
       {/* Error alert */}
       {errorMsg && <div style={styles.alertError}>{errorMsg}</div>}
 
+      {/* View toggle */}
+      <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+        <button
+          onClick={() => setCalendarView("list")}
+          style={calendarView === "list" ? styles.tabBtnActive : styles.tabBtn}
+        >
+          List View
+        </button>
+        <button
+          onClick={() => setCalendarView("calendar")}
+          style={calendarView === "calendar" ? styles.tabBtnActive : styles.tabBtn}
+        >
+          Calendar View
+        </button>
+      </div>
+
+      {calendarView === "calendar" ? (
+        <WeekCalendar
+          appointments={appointments}
+          providers={providers}
+          weekOffset={weekOffset}
+          onWeekChange={setWeekOffset}
+        />
+      ) : (
+        <>
       {/* Controls & filters section */}
       <section style={styles.filterSection}>
         <div style={styles.filterGroup}>
@@ -295,6 +438,150 @@ export default function ReceptionistDashboard({
           </div>
         )}
       </section>
+        </>
+      )}
+        </>
+      )}
+
+      {activeTab === "availability" && (
+        <section style={styles.tableCard}>
+          {availMsg && (
+            <div style={availMsg.ok ? styles.alertSuccess : styles.alertError} key={availMsg.id}>
+              {availMsg.text}
+            </div>
+          )}
+          {availProviders.map((provider) => (
+            <div key={provider.id} style={styles.providerBlock}>
+              <button
+                style={styles.providerBlockHeader}
+                onClick={() => setExpandedProvider(expandedProvider === provider.id ? null : provider.id)}
+              >
+                <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{provider.name}</span>
+                <span style={{ fontSize: "12px", color: "#64748b" }}>{provider.specialty} {expandedProvider === provider.id ? "▲" : "▼"}</span>
+              </button>
+
+              {expandedProvider === provider.id && (
+                <div style={{ padding: "16px", borderTop: "1px solid #f1f5f9" }}>
+                  {/* Weekly Schedule */}
+                  <h4 style={styles.availSectionTitle}>Weekly Schedule</h4>
+                  <table style={styles.scheduleTable}>
+                    <thead>
+                      <tr>
+                        <th style={styles.scheduleTh}>Day</th>
+                        <th style={styles.scheduleTh}>Start</th>
+                        <th style={styles.scheduleTh}>End</th>
+                        <th style={styles.scheduleTh}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[0,1,2,3,4,5,6].map((day) => {
+                        const existing = provider.schedules?.find((s) => s.weekday === day);
+                        const key = `${provider.id}-${day}`;
+                        const edit = scheduleEdits[key] ?? { startTime: existing?.startTime ?? "09:00", endTime: existing?.endTime ?? "18:00" };
+                        return (
+                          <tr key={day} style={styles.scheduleTr}>
+                            <td style={styles.scheduleTd}>{WEEKDAYS[day]}</td>
+                            <td style={styles.scheduleTd}>
+                              <input
+                                type="time"
+                                value={edit.startTime}
+                                onChange={(e) => setScheduleEdits((prev) => ({ ...prev, [key]: { ...edit, startTime: e.target.value } }))}
+                                style={styles.timeInput}
+                              />
+                            </td>
+                            <td style={styles.scheduleTd}>
+                              <input
+                                type="time"
+                                value={edit.endTime}
+                                onChange={(e) => setScheduleEdits((prev) => ({ ...prev, [key]: { ...edit, endTime: e.target.value } }))}
+                                style={styles.timeInput}
+                              />
+                            </td>
+                            <td style={styles.scheduleTd}>
+                              <button
+                                onClick={() => handleSaveSchedule(provider.id, day)}
+                                disabled={savingSchedule === key}
+                                style={styles.smallSaveBtn}
+                              >
+                                {savingSchedule === key ? "..." : existing ? "Update" : "Add"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+
+                  {/* Time-Off */}
+                  <h4 style={{ ...styles.availSectionTitle, marginTop: "20px" }}>Upcoming Time-Off / Blocked Slots</h4>
+                  {(provider.timeOff ?? []).length === 0 ? (
+                    <p style={{ fontSize: "13px", color: "#94a3b8", margin: "0 0 12px 0" }}>No upcoming time-off entries.</p>
+                  ) : (
+                    <div style={{ marginBottom: "12px" }}>
+                      {(provider.timeOff ?? []).map((t) => (
+                        <div key={t.id} style={styles.timeOffRow}>
+                          <div style={{ fontSize: "13px", color: "#1e293b" }}>
+                            <strong>{new Date(t.startAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</strong>
+                            {" → "}
+                            {new Date(t.endAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
+                            {t.reason && <span style={{ color: "#64748b" }}> — {t.reason}</span>}
+                          </div>
+                          <button
+                            onClick={() => handleDeleteTimeOff(provider.id, t.id)}
+                            style={styles.deleteBtn}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={styles.timeOffForm}>
+                    <div style={styles.timeOffFormRow}>
+                      <div style={styles.timeOffField}>
+                        <label style={styles.fieldLabel}>FROM</label>
+                        <input
+                          type="datetime-local"
+                          value={timeOffForm[provider.id]?.startAt ?? ""}
+                          onChange={(e) => setTimeOffForm((prev) => ({ ...prev, [provider.id]: { ...prev[provider.id], startAt: e.target.value, endAt: prev[provider.id]?.endAt ?? "", reason: prev[provider.id]?.reason ?? "" } }))}
+                          style={styles.dateTimeInput}
+                        />
+                      </div>
+                      <div style={styles.timeOffField}>
+                        <label style={styles.fieldLabel}>TO</label>
+                        <input
+                          type="datetime-local"
+                          value={timeOffForm[provider.id]?.endAt ?? ""}
+                          onChange={(e) => setTimeOffForm((prev) => ({ ...prev, [provider.id]: { ...prev[provider.id], startAt: prev[provider.id]?.startAt ?? "", endAt: e.target.value, reason: prev[provider.id]?.reason ?? "" } }))}
+                          style={styles.dateTimeInput}
+                        />
+                      </div>
+                      <div style={{ ...styles.timeOffField, flex: 2 }}>
+                        <label style={styles.fieldLabel}>REASON (optional)</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Conference, Sick leave"
+                          value={timeOffForm[provider.id]?.reason ?? ""}
+                          onChange={(e) => setTimeOffForm((prev) => ({ ...prev, [provider.id]: { ...prev[provider.id], startAt: prev[provider.id]?.startAt ?? "", endAt: prev[provider.id]?.endAt ?? "", reason: e.target.value } }))}
+                          style={styles.dateTimeInput}
+                        />
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleAddTimeOff(provider.id)}
+                      disabled={savingTimeOff === provider.id}
+                      style={styles.addTimeOffBtn}
+                    >
+                      {savingTimeOff === provider.id ? "Adding..." : "+ Block Time / Add Time-Off"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
@@ -623,5 +910,172 @@ const styles = {
     fontWeight: "700" as const,
     padding: "3px 6px",
     borderRadius: "4px",
+  },
+  alertSuccess: {
+    background: "#ecfdf5",
+    border: "1px solid #a7f3d0",
+    color: "#047857",
+    padding: "10px 14px",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "500" as const,
+    marginBottom: "16px",
+  },
+  tabBar: {
+    display: "flex",
+    gap: "4px",
+    marginBottom: "24px",
+    background: "#f8fafc",
+    padding: "6px",
+    borderRadius: "12px",
+    border: "1px solid #e2e8f0",
+  },
+  tabBtn: {
+    flex: 1,
+    padding: "8px 16px",
+    background: "transparent",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "600" as const,
+    color: "#64748b",
+    cursor: "pointer",
+  },
+  tabBtnActive: {
+    flex: 1,
+    padding: "8px 16px",
+    background: "#ffffff",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "700" as const,
+    color: "#4f46e5",
+    cursor: "pointer",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+  },
+  providerBlock: {
+    border: "1px solid #e2e8f0",
+    borderRadius: "12px",
+    overflow: "hidden" as const,
+    marginBottom: "12px",
+  },
+  providerBlockHeader: {
+    width: "100%",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "14px 16px",
+    background: "#f8fafc",
+    border: "none",
+    cursor: "pointer",
+    textAlign: "left" as const,
+  },
+  availSectionTitle: {
+    margin: "0 0 10px 0",
+    fontSize: "12px",
+    fontWeight: "700" as const,
+    color: "#94a3b8",
+    letterSpacing: "0.5px",
+    textTransform: "uppercase" as const,
+  },
+  scheduleTable: {
+    width: "100%",
+    borderCollapse: "collapse" as const,
+    fontSize: "13px",
+  },
+  scheduleTh: {
+    textAlign: "left" as const,
+    padding: "6px 8px",
+    fontSize: "11px",
+    fontWeight: "700" as const,
+    color: "#94a3b8",
+    borderBottom: "1px solid #f1f5f9",
+  },
+  scheduleTr: {
+    borderBottom: "1px solid #f8fafc",
+  },
+  scheduleTd: {
+    padding: "6px 8px",
+    color: "#334155",
+  },
+  timeInput: {
+    border: "1px solid #e2e8f0",
+    borderRadius: "6px",
+    padding: "4px 8px",
+    fontSize: "13px",
+    color: "#0f172a",
+    outline: "none",
+  },
+  smallSaveBtn: {
+    background: "#6366f1",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "6px",
+    padding: "4px 10px",
+    fontSize: "12px",
+    fontWeight: "600" as const,
+    cursor: "pointer",
+  },
+  timeOffRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "8px 0",
+    borderBottom: "1px solid #f1f5f9",
+  },
+  deleteBtn: {
+    background: "transparent",
+    color: "#ef4444",
+    border: "1px solid #fee2e2",
+    borderRadius: "6px",
+    padding: "4px 10px",
+    fontSize: "12px",
+    fontWeight: "600" as const,
+    cursor: "pointer",
+  },
+  timeOffForm: {
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    padding: "12px",
+    marginTop: "12px",
+  },
+  timeOffFormRow: {
+    display: "flex",
+    gap: "10px",
+    marginBottom: "10px",
+    flexWrap: "wrap" as const,
+  },
+  timeOffField: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "4px",
+    minWidth: "160px",
+  },
+  fieldLabel: {
+    fontSize: "10px",
+    fontWeight: "700" as const,
+    color: "#94a3b8",
+    letterSpacing: "0.5px",
+  },
+  dateTimeInput: {
+    border: "1px solid #e2e8f0",
+    borderRadius: "6px",
+    padding: "6px 8px",
+    fontSize: "13px",
+    color: "#0f172a",
+    outline: "none",
+    width: "100%",
+  },
+  addTimeOffBtn: {
+    background: "#f59e0b",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "8px",
+    padding: "8px 16px",
+    fontSize: "13px",
+    fontWeight: "600" as const,
+    cursor: "pointer",
   },
 };

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createAppointment, rescheduleAppointment, cancelAppointment } from "./service";
+import { createAppointment, rescheduleAppointment, cancelAppointment, receptionistTransition } from "./service";
 import { db } from "@/lib/db";
 import { AppointmentStatus, Role } from "@prisma/client";
 
@@ -18,6 +18,9 @@ vi.mock("@/lib/db", () => {
       patientProfile: {
         findFirst: vi.fn(),
       },
+      providerTimeOff: {
+        findFirst: vi.fn(),
+      },
       auditLog: {
         create: vi.fn(),
       },
@@ -34,6 +37,8 @@ describe("Appointments Service - Business Rules", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: no time-off conflicts unless overridden per test
+    vi.mocked(db.providerTimeOff.findFirst).mockResolvedValue(null);
   });
 
   describe("createAppointment", () => {
@@ -175,6 +180,112 @@ describe("Appointments Service - Business Rules", () => {
       expect(result).toBe(expectedApt);
       expect(db.appointment.create).toHaveBeenCalledOnce();
       expect(db.auditLog.create).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("createAppointment - rate limiting", () => {
+    it("should throw if patient made 3+ bookings in the last 10 minutes", async () => {
+      const startAt = new Date(Date.now() + 60_000 * 30);
+      const endAt = new Date(startAt.getTime() + 15 * 60_000);
+
+      vi.mocked(db.provider.findFirst).mockResolvedValue({ id: mockProviderId } as any);
+      vi.mocked(db.patientProfile.findFirst).mockResolvedValue({ id: mockPatientId } as any);
+      vi.mocked(db.appointment.findFirst).mockResolvedValue(null);
+      // First count: active booking check (returns 0), second count: rate limit check (returns 3)
+      vi.mocked(db.appointment.count).mockResolvedValueOnce(0).mockResolvedValueOnce(3);
+
+      await expect(
+        createAppointment({
+          tenantId: mockTenantId,
+          actorId: mockActorId,
+          actorRole: Role.PATIENT,
+          clinicId: mockClinicId,
+          providerId: mockProviderId,
+          patientId: mockPatientId,
+          startAt,
+          endAt,
+        })
+      ).rejects.toThrow("Too many booking attempts");
+    });
+  });
+
+  describe("createAppointment - time-off conflict", () => {
+    it("should throw if provider is on time-off during the requested slot", async () => {
+      const startAt = new Date(Date.now() + 60_000 * 30);
+      const endAt = new Date(startAt.getTime() + 15 * 60_000);
+
+      vi.mocked(db.provider.findFirst).mockResolvedValue({ id: mockProviderId } as any);
+      vi.mocked(db.patientProfile.findFirst).mockResolvedValue({ id: mockPatientId } as any);
+      vi.mocked(db.appointment.findFirst).mockResolvedValue(null); // no schedule overlap
+      vi.mocked(db.providerTimeOff.findFirst).mockResolvedValue({ id: "timeoff-1" } as any);
+
+      await expect(
+        createAppointment({
+          tenantId: mockTenantId,
+          actorId: mockActorId,
+          actorRole: Role.PATIENT,
+          clinicId: mockClinicId,
+          providerId: mockProviderId,
+          patientId: mockPatientId,
+          startAt,
+          endAt,
+        })
+      ).rejects.toThrow("Provider is not available for the selected time");
+    });
+  });
+
+  describe("receptionistTransition", () => {
+    it("should throw when transitioning to CHECKED_IN from a terminal status", async () => {
+      vi.mocked(db.appointment.findFirst).mockResolvedValue({
+        id: "apt-1",
+        status: AppointmentStatus.CANCELLED_BY_RECEPTION,
+      } as any);
+
+      await expect(
+        receptionistTransition({
+          tenantId: mockTenantId,
+          actorId: mockActorId,
+          appointmentId: "apt-1",
+          nextStatus: "CHECKED_IN",
+        })
+      ).rejects.toThrow("Cannot transition from CANCELLED_BY_RECEPTION to CHECKED_IN");
+    });
+
+    it("should throw when transitioning to COMPLETED from BOOKED", async () => {
+      vi.mocked(db.appointment.findFirst).mockResolvedValue({
+        id: "apt-1",
+        status: AppointmentStatus.BOOKED,
+      } as any);
+
+      await expect(
+        receptionistTransition({
+          tenantId: mockTenantId,
+          actorId: mockActorId,
+          appointmentId: "apt-1",
+          nextStatus: "COMPLETED",
+        })
+      ).rejects.toThrow("Cannot transition from BOOKED to COMPLETED");
+    });
+
+    it("should successfully transition BOOKED → CHECKED_IN", async () => {
+      vi.mocked(db.appointment.findFirst).mockResolvedValue({
+        id: "apt-1",
+        status: AppointmentStatus.BOOKED,
+      } as any);
+      vi.mocked(db.appointment.update).mockResolvedValue({
+        id: "apt-1",
+        status: AppointmentStatus.CHECKED_IN,
+      } as any);
+
+      const result = await receptionistTransition({
+        tenantId: mockTenantId,
+        actorId: mockActorId,
+        appointmentId: "apt-1",
+        nextStatus: "CHECKED_IN",
+      });
+
+      expect(result.status).toBe(AppointmentStatus.CHECKED_IN);
+      expect(db.appointment.update).toHaveBeenCalledOnce();
     });
   });
 

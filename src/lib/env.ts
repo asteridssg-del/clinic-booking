@@ -14,5 +14,7 @@ export const env = {
   receptionistAllowlist: (process.env.RECEPTIONIST_ALLOWLIST ?? "")
     .split(",")
     .map((v) => v.trim().toLowerCase())
-    .filter(Boolean)
+    .filter(Boolean),
+  resendApiKey: process.env.RESEND_API_KEY,
+  cronSecret: process.env.CRON_SECRET
 };
