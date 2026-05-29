@@ -44,6 +44,7 @@ interface PatientDashboardProps {
   providers: Provider[];
   clinics: Clinic[];
   activeAppointment: Appointment | null;
+  patientPhone: string | null;
 }
 
 export default function PatientDashboard({
@@ -52,10 +53,19 @@ export default function PatientDashboard({
   providers,
   clinics,
   activeAppointment: initialActiveAppointment,
+  patientPhone,
 }: PatientDashboardProps) {
   // Booking & Rescheduling States
   const [activeAppointment, setActiveAppointment] = useState<Appointment | null>(initialActiveAppointment);
   const [isRescheduling, setIsRescheduling] = useState(false);
+
+  // Phone collection banner
+  const isPlaceholderPhone = !patientPhone || patientPhone.startsWith("+000");
+  const [showPhoneBanner, setShowPhoneBanner] = useState(isPlaceholderPhone);
+  const [phoneInput, setPhoneInput] = useState("");
+  const [phoneSubmitting, setPhoneSubmitting] = useState(false);
+  const [phoneError, setPhoneError] = useState("");
+  const [phoneSuccess, setPhoneSuccess] = useState(false);
   
   // Wizard States
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -120,6 +130,30 @@ export default function PatientDashboard({
     
     fetchSlots();
   }, [selectedProvider, selectedDate]);
+
+  // Handle Phone Save
+  const handleSavePhone = async () => {
+    setPhoneSubmitting(true);
+    setPhoneError("");
+    try {
+      const res = await fetch("/api/v1/me/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phoneE164: phoneInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = data.details?.fieldErrors?.phoneE164?.[0];
+        throw new Error(detail || data.error || "Failed to save phone number");
+      }
+      setPhoneSuccess(true);
+      setShowPhoneBanner(false);
+    } catch (err: any) {
+      setPhoneError(err.message);
+    } finally {
+      setPhoneSubmitting(false);
+    }
+  };
 
   // Handle Booking Create
   const handleCreateBooking = async () => {
@@ -291,6 +325,32 @@ export default function PatientDashboard({
       {/* Notifications Panel */}
       {successMsg && <div style={styles.alertSuccess}>{successMsg}</div>}
       {errorMsg && <div style={styles.alertError}>{errorMsg}</div>}
+      {phoneSuccess && <div style={styles.alertSuccess}>Phone number saved. You will now receive appointment reminders.</div>}
+
+      {/* Phone Collection Banner */}
+      {showPhoneBanner && (
+        <div style={styles.phoneBanner}>
+          <p style={styles.phoneBannerTitle}>Add your phone number to receive appointment reminders</p>
+          <div style={styles.phoneInputRow}>
+            <input
+              type="tel"
+              placeholder="+60123456789"
+              value={phoneInput}
+              onChange={(e) => setPhoneInput(e.target.value)}
+              style={styles.phoneInput}
+            />
+            <button
+              onClick={handleSavePhone}
+              disabled={phoneSubmitting || !phoneInput.trim()}
+              style={styles.phoneSaveBtn}
+            >
+              {phoneSubmitting ? "Saving..." : "Save"}
+            </button>
+          </div>
+          {phoneError && <p style={styles.phoneErrorText}>{phoneError}</p>}
+          <p style={styles.phoneHint}>Use E.164 format, e.g. +60123456789 or +85291234567</p>
+        </div>
+      )}
 
       {/* Booking Flow Router */}
       {activeAppointment && !isRescheduling ? (
@@ -1005,5 +1065,53 @@ const styles = {
     fontWeight: "600" as const,
     cursor: "pointer",
     boxShadow: "0 4px 12px rgba(16, 185, 129, 0.15)",
+  },
+  phoneBanner: {
+    background: "#fffbeb",
+    border: "1px solid #fde68a",
+    borderRadius: "12px",
+    padding: "16px",
+    marginBottom: "20px",
+  },
+  phoneBannerTitle: {
+    margin: "0 0 12px 0",
+    fontSize: "13px",
+    fontWeight: "600" as const,
+    color: "#92400e",
+  },
+  phoneInputRow: {
+    display: "flex",
+    gap: "8px",
+  },
+  phoneInput: {
+    flex: 1,
+    border: "1px solid #fcd34d",
+    borderRadius: "8px",
+    padding: "10px 12px",
+    fontSize: "14px",
+    color: "#0f172a",
+    outline: "none",
+    background: "#ffffff",
+  },
+  phoneSaveBtn: {
+    background: "#f59e0b",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "8px",
+    padding: "10px 16px",
+    fontSize: "14px",
+    fontWeight: "600" as const,
+    cursor: "pointer",
+  },
+  phoneErrorText: {
+    margin: "8px 0 0 0",
+    fontSize: "12px",
+    color: "#b91c1c",
+  },
+  phoneHint: {
+    margin: "8px 0 0 0",
+    fontSize: "11px",
+    color: "#92400e",
+    opacity: 0.7,
   },
 };

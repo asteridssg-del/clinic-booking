@@ -55,6 +55,27 @@ describe("Appointments Service - Business Rules", () => {
       ).rejects.toThrow("Appointment must be in the future");
     });
 
+    it("should throw error if patient profile is not found", async () => {
+      const startAt = new Date(Date.now() + 60_000 * 30);
+      const endAt = new Date(startAt.getTime() + 15 * 60_000);
+
+      vi.mocked(db.provider.findFirst).mockResolvedValue({ id: mockProviderId } as any);
+      vi.mocked(db.patientProfile.findFirst).mockResolvedValue(null);
+
+      await expect(
+        createAppointment({
+          tenantId: mockTenantId,
+          actorId: mockActorId,
+          actorRole: Role.PATIENT,
+          clinicId: mockClinicId,
+          providerId: mockProviderId,
+          patientId: mockPatientId,
+          startAt,
+          endAt,
+        })
+      ).rejects.toThrow("Patient profile not found for this clinic");
+    });
+
     it("should throw error if provider is not active or doesn't exist", async () => {
       const startAt = new Date(Date.now() + 60_000 * 30);
       const endAt = new Date(startAt.getTime() + 15 * 60_000);

@@ -56,10 +56,12 @@ export default async function HomePage() {
               </svg>
               Sign In with Google Account
             </a>
-            <p style={styles.seedNotice}>
-              🔧 <strong>First time running?</strong> Populate mock clinics and practitioners by visiting{" "}
-              <a href="/api/dev/seed" style={styles.seedLink}>/api/dev/seed</a>.
-            </p>
+            {process.env.NODE_ENV !== "production" && (
+              <p style={styles.seedNotice}>
+                🔧 <strong>First time running?</strong> Populate mock clinics and practitioners by visiting{" "}
+                <a href="/api/dev/seed" style={styles.seedLink}>/api/dev/seed</a>.
+              </p>
+            )}
           </div>
         </div>
       </main>
@@ -185,6 +187,7 @@ export default async function HomePage() {
       providers={providers}
       clinics={clinics}
       activeAppointment={activeAppointment}
+      patientPhone={userWithProfile.patientProfile?.phoneE164 ?? null}
     />
   );
 }
