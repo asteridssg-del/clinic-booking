@@ -124,8 +124,7 @@ export async function createAppointment(input: {
     db.patientProfile.findFirst({
       where: {
         id: input.patientId,
-        tenantId: input.tenantId,
-        clinicId: input.clinicId
+        tenantId: input.tenantId
       },
       select: { id: true }
     })
